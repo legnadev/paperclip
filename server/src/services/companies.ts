@@ -246,7 +246,11 @@ export function companyService(db: Db) {
         return enrichCompany(hydrated);
       }),
 
-    pause: (id: string, reason: string = "manual") =>
+    pause: (
+      id: string,
+      reason: string = "manual",
+      options: { cancelActiveForAgent?: (agentId: string) => Promise<unknown> } = {},
+    ) =>
       db.transaction(async (tx) => {
         const existing = await tx
           .select({ status: companies.status })
@@ -255,6 +259,18 @@ export function companyService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!existing) return null;
         if (existing.status === "archived") throw unprocessable("Cannot pause an archived company");
+        if (existing.status === "paused") throw unprocessable("Company is already paused");
+
+        const companyAgents = await tx
+          .select({ id: agents.id, status: agents.status })
+          .from(agents)
+          .where(and(eq(agents.companyId, id), notInArray(agents.status, ["terminated", "pending_approval", "paused"])));
+
+        if (options.cancelActiveForAgent) {
+          for (const agent of companyAgents) {
+            await options.cancelActiveForAgent(agent.id);
+          }
+        }
 
         const updated = await tx
           .update(companies)
@@ -264,10 +280,6 @@ export function companyService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!updated) return null;
 
-        const companyAgents = await tx
-          .select({ id: agents.id, status: agents.status })
-          .from(agents)
-          .where(and(eq(agents.companyId, id), notInArray(agents.status, ["terminated", "pending_approval"])));
         for (const agent of companyAgents) {
           await tx
             .update(agents)

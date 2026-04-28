@@ -383,13 +383,12 @@ export function companyRoutes(db: Db, storage?: StorageService) {
     assertBoard(req);
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
-    const result = await svc.pause(companyId);
+    const result = await svc.pause(companyId, "manual", {
+      cancelActiveForAgent: heartbeat.cancelActiveForAgent,
+    });
     if (!result) {
       res.status(404).json({ error: "Company not found" });
       return;
-    }
-    for (const agentId of result.pausedAgentIds) {
-      await heartbeat.cancelActiveForAgent(agentId);
     }
     await logActivity(db, {
       companyId,
