@@ -280,11 +280,12 @@ export function companyService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!updated) return null;
 
-        for (const agent of companyAgents) {
+        const companyAgentIds = companyAgents.map((agent) => agent.id);
+        if (companyAgentIds.length > 0) {
           await tx
             .update(agents)
             .set({ status: "paused", pauseReason: "company_paused", pausedAt: new Date(), updatedAt: new Date() })
-            .where(eq(agents.id, agent.id));
+            .where(inArray(agents.id, companyAgentIds));
         }
 
         const row = await getCompanyQuery(tx)
@@ -292,7 +293,7 @@ export function companyService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!row) return null;
         const [hydrated] = await hydrateCompanySpend([row], tx);
-        return { ...enrichCompany(hydrated), pausedAgentIds: companyAgents.map((a) => a.id) };
+        return { ...enrichCompany(hydrated), pausedAgentIds: companyAgentIds };
       }),
 
     resume: (id: string) =>
@@ -317,11 +318,12 @@ export function companyService(db: Db) {
           .select({ id: agents.id })
           .from(agents)
           .where(and(eq(agents.companyId, id), eq(agents.pauseReason, "company_paused")));
-        for (const agent of pausedAgents) {
+        const pausedAgentIds = pausedAgents.map((agent) => agent.id);
+        if (pausedAgentIds.length > 0) {
           await tx
             .update(agents)
             .set({ status: "idle", pauseReason: null, pausedAt: null, updatedAt: new Date() })
-            .where(eq(agents.id, agent.id));
+            .where(inArray(agents.id, pausedAgentIds));
         }
 
         const row = await getCompanyQuery(tx)
@@ -329,7 +331,7 @@ export function companyService(db: Db) {
           .then((rows) => rows[0] ?? null);
         if (!row) return null;
         const [hydrated] = await hydrateCompanySpend([row], tx);
-        return { ...enrichCompany(hydrated), resumedAgentIds: pausedAgents.map((a) => a.id) };
+        return { ...enrichCompany(hydrated), resumedAgentIds: pausedAgentIds };
       }),
 
     archive: (id: string) =>

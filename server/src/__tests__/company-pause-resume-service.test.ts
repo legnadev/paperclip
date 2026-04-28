@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { agents, companies, createDb } from "@paperclipai/db";
+import { agents, companies, createDb, heartbeatRuns } from "@paperclipai/db";
 import { eq } from "drizzle-orm";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { companyService } from "../services/companies.js";
+import { heartbeatService } from "../services/heartbeat.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEP = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -52,6 +53,7 @@ describeEP("companyService pause/resume", () => {
   }, 20_000);
 
   afterEach(async () => {
+    await db.delete(heartbeatRuns);
     await db.delete(agents);
     await db.delete(companies);
   });
@@ -193,5 +195,27 @@ describeEP("companyService pause/resume", () => {
     const companyId = await insertCompany(db, { status: "paused", pauseReason: "manual", pausedAt: new Date() });
     const svc = companyService(db);
     await expect(svc.pause(companyId)).rejects.toThrow("already paused");
+  });
+
+  it("skips timer heartbeats for agents in paused companies", async () => {
+    const companyId = await insertCompany(db, { status: "paused", pauseReason: "manual", pausedAt: new Date() });
+    const dueCreatedAt = new Date("2026-01-01T00:00:00.000Z");
+    await insertAgent(db, companyId, {
+      status: "idle",
+      createdAt: dueCreatedAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 30 } },
+    });
+    await insertAgent(db, companyId, {
+      status: "running",
+      createdAt: dueCreatedAt,
+      runtimeConfig: { heartbeat: { enabled: true, intervalSec: 30 } },
+    });
+
+    const result = await heartbeatService(db).tickTimers(new Date("2026-01-01T00:01:00.000Z"));
+
+    expect(result.checked).toBe(0);
+    expect(result.enqueued).toBe(0);
+    const runs = await db.select({ id: heartbeatRuns.id }).from(heartbeatRuns);
+    expect(runs).toHaveLength(0);
   });
 });
